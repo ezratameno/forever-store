@@ -1,0 +1,2 @@
+<h1>Forever store</h1>
+<p>This is the first video of the decentralized forever storage. Where we are going to build a decentralized network where we can store literally anything. Plain text documents, images, and videos. You name it and our storage will handle it. Everything is going to be encrypted so only we can read our data. Think about this as a decentralized Google drive.</p>
