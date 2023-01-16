@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"testing"
 
@@ -16,48 +17,46 @@ func TestPathTransformFunc(t *testing.T) {
 	assert.Equal(t, pathKey.Filename, "cf5d4b01c4d9438c22c56c832f83bd3e8c6304f9")
 }
 
-func TestDelete(t *testing.T) {
-	opts := StoreOpts{
-		PathTransformFunc: CASPathTransformFunc,
-	}
-
-	s := NewStore(opts)
-	key := "momsspecials"
-
-	// write.
-	data := []byte("some jpg bytes")
-	assert.Nil(t, s.writeStream(key, bytes.NewReader(data)))
-
-	// check that the file exist.
-	assert.Equal(t, true, s.Has(key))
-
-	assert.Nil(t, s.Delete(key))
-
-	// check that the file doesn't exist.
-	assert.Equal(t, false, s.Has(key))
-}
 func TestStore(t *testing.T) {
 
+	s := newStore()
+	defer teardown(t, s)
+	count := 50
+
+	// test multiple times with different keys.
+	for i := 0; i < count; i++ {
+		key := fmt.Sprintf("foo_%d", i)
+
+		// Write.
+		data := []byte("some jpg bytes")
+		assert.Nil(t, s.writeStream(key, bytes.NewReader(data)))
+
+		// Check that the file exists.
+		assert.Equal(t, true, s.Has(key))
+
+		// Read.
+		r, err := s.Read(key)
+		assert.Nil(t, err)
+		b, err := io.ReadAll(r)
+		assert.Nil(t, err)
+		assert.Equal(t, data, b)
+
+		assert.Nil(t, s.Delete(key))
+
+		// Check that the file doesn't exists.
+		assert.Equal(t, false, s.Has(key))
+	}
+
+}
+
+func newStore() *Store {
 	opts := StoreOpts{
 		PathTransformFunc: CASPathTransformFunc,
 	}
 
-	s := NewStore(opts)
-	key := "momsspecials"
+	return NewStore(opts)
+}
 
-	// write.
-	data := []byte("some jpg bytes")
-	assert.Nil(t, s.writeStream(key, bytes.NewReader(data)))
-
-	// read.
-	r, err := s.Read(key)
-
-	assert.Nil(t, err)
-
-	b, err := io.ReadAll(r)
-	assert.Nil(t, err)
-	assert.Equal(t, data, b)
-
-	s.Delete(key)
-
+func teardown(t *testing.T, s *Store) {
+	assert.Nil(t, s.Clear())
 }

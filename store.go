@@ -11,6 +11,10 @@ import (
 	"strings"
 )
 
+const (
+	defaultRootFolderName = "ggnetwork"
+)
+
 // CAS - content addressable.
 // CASPathTransformFunc will turn the key into a specific path on disk.
 func CASPathTransformFunc(key string) PathKey {
@@ -61,11 +65,17 @@ func (p *PathKey) FullPath() string {
 }
 
 type StoreOpts struct {
+
+	// Root is the folder name of the root, containing all the folders/files of the system.
+	Root              string
 	PathTransformFunc PathTransformFunc
 }
 
-var DefaultPathTransformFunc = func(key string) string {
-	return key
+var DefaultPathTransformFunc = func(key string) PathKey {
+	return PathKey{
+		PathName: key,
+		Filename: key,
+	}
 }
 
 type Store struct {
@@ -73,6 +83,16 @@ type Store struct {
 }
 
 func NewStore(opts StoreOpts) *Store {
+
+	// Defaults.
+	if opts.PathTransformFunc == nil {
+		opts.PathTransformFunc = DefaultPathTransformFunc
+	}
+
+	if opts.Root == "" {
+		opts.Root = defaultRootFolderName
+	}
+
 	return &Store{
 		StoreOpts: opts,
 	}
@@ -81,12 +101,16 @@ func NewStore(opts StoreOpts) *Store {
 // Has checks if we have the file exists.
 func (s *Store) Has(key string) bool {
 	pathKey := s.PathTransformFunc(key)
-	pathAndFileName := pathKey.FullPath()
+	pathAndFileName := path.Join(s.Root, pathKey.FullPath())
 
 	_, err := os.Stat(pathAndFileName)
 
 	return err == nil
 
+}
+
+func (s *Store) Clear() error {
+	return os.RemoveAll(s.Root)
 }
 
 // Delete deletes a file from the disk.
@@ -99,7 +123,7 @@ func (s *Store) Delete(key string) error {
 	}()
 
 	// delete the root directory recursively.
-	return os.RemoveAll(pathKey.FirstPathName())
+	return os.RemoveAll(path.Join(s.Root, pathKey.FirstPathName()))
 }
 
 // Read reads the content of the file.
@@ -122,7 +146,7 @@ func (s *Store) Read(key string) (io.Reader, error) {
 
 func (s *Store) readStream(key string) (io.ReadCloser, error) {
 	pathKey := s.PathTransformFunc(key)
-	pathAndFileName := pathKey.FullPath()
+	pathAndFileName := path.Join(s.Root, pathKey.FullPath())
 
 	return os.Open(pathAndFileName)
 }
@@ -132,11 +156,11 @@ func (s *Store) writeStream(key string, r io.Reader) error {
 	pathKey := s.PathTransformFunc(key)
 
 	// create folder.
-	if err := os.MkdirAll(pathKey.PathName, os.ModePerm); err != nil {
+	if err := os.MkdirAll(path.Join(s.Root, pathKey.PathName), os.ModePerm); err != nil {
 		return err
 	}
 
-	pathAndFileName := pathKey.FullPath()
+	pathAndFileName := path.Join(s.Root, pathKey.FullPath())
 
 	// create the file.
 	f, err := os.Create(pathAndFileName)
