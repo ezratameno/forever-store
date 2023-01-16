@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"encoding/hex"
 	"io"
@@ -35,20 +36,28 @@ func CASPathTransformFunc(key string) PathKey {
 	}
 
 	return PathKey{
-		PathName:    strings.Join(paths, string(os.PathSeparator)),
-		OriginalKey: hashStr,
+		PathName: strings.Join(paths, string(os.PathSeparator)),
+		Filename: hashStr,
 	}
 }
 
 type PathTransformFunc func(string) PathKey
 
 type PathKey struct {
-	PathName    string
-	OriginalKey string
+	PathName string
+	Filename string
 }
 
-func (p *PathKey) Filename() string {
-	return path.Join(p.PathName, p.OriginalKey)
+// FirstPathName returns the root path name.
+func (p *PathKey) FirstPathName() string {
+	paths := strings.Split(p.PathName, string(os.PathSeparator))
+	if len(paths) > 0 {
+		return paths[0]
+	}
+	return ""
+}
+func (p *PathKey) FullPath() string {
+	return path.Join(p.PathName, p.Filename)
 }
 
 type StoreOpts struct {
@@ -69,6 +78,55 @@ func NewStore(opts StoreOpts) *Store {
 	}
 }
 
+// Has checks if we have the file exists.
+func (s *Store) Has(key string) bool {
+	pathKey := s.PathTransformFunc(key)
+	pathAndFileName := pathKey.FullPath()
+
+	_, err := os.Stat(pathAndFileName)
+
+	return err == nil
+
+}
+
+// Delete deletes a file from the disk.
+func (s *Store) Delete(key string) error {
+	pathKey := s.PathTransformFunc(key)
+	pathAndFileName := pathKey.FullPath()
+
+	defer func() {
+		log.Printf("deleted [%s] from disk", pathAndFileName)
+	}()
+
+	// delete the root directory recursively.
+	return os.RemoveAll(pathKey.FirstPathName())
+}
+
+// Read reads the content of the file.
+func (s *Store) Read(key string) (io.Reader, error) {
+	f, err := s.readStream(key)
+	if err != nil {
+		return nil, err
+	}
+
+	defer f.Close()
+
+	buf := new(bytes.Buffer)
+	_, err = io.Copy(buf, f)
+	if err != nil {
+		return nil, err
+	}
+
+	return buf, nil
+}
+
+func (s *Store) readStream(key string) (io.ReadCloser, error) {
+	pathKey := s.PathTransformFunc(key)
+	pathAndFileName := pathKey.FullPath()
+
+	return os.Open(pathAndFileName)
+}
+
 func (s *Store) writeStream(key string, r io.Reader) error {
 
 	pathKey := s.PathTransformFunc(key)
@@ -78,7 +136,7 @@ func (s *Store) writeStream(key string, r io.Reader) error {
 		return err
 	}
 
-	pathAndFileName := pathKey.Filename()
+	pathAndFileName := pathKey.FullPath()
 
 	// create the file.
 	f, err := os.Create(pathAndFileName)
@@ -87,7 +145,7 @@ func (s *Store) writeStream(key string, r io.Reader) error {
 	}
 	defer f.Close()
 
-	// write to the file from the buffer.
+	// write to the file from the reader.
 	n, err := io.Copy(f, r)
 	if err != nil {
 		return err
