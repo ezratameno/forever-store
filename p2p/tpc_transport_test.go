@@ -14,7 +14,7 @@ func TestTCPTransport(t *testing.T) {
 		HandshakeFunc: NOPHandshakeFunc,
 		Decoder:       DefaultDecoder{},
 	}
-	tr := NewTCPTransport(opts)
+	tr := NewTCPTransport(&opts)
 
 	assert.Equal(t, tr.ListenAddr, listenAddr)
 

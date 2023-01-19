@@ -7,30 +7,6 @@ import (
 	"net"
 )
 
-// TCPPeer represents the remote node over a TCP established connection.
-type TCPPeer struct {
-
-	// conn is the underlying connection of the peer.
-	conn net.Conn
-
-	// if we dial and retrieve a conn => outbound == true.
-	//
-	// if we accept and retrieve a conn => outbound == false.
-	outbound bool
-}
-
-func NewTCPPeer(conn net.Conn, outbound bool) *TCPPeer {
-	return &TCPPeer{
-		conn:     conn,
-		outbound: outbound,
-	}
-}
-
-// Close implements the Peer interface.
-func (p *TCPPeer) Close() error {
-	return p.conn.Close()
-}
-
 type TCPTransportOpts struct {
 	ListenAddr    string
 	HandshakeFunc HandshakeFunc
@@ -38,23 +14,41 @@ type TCPTransportOpts struct {
 	OnPeer        func(Peer) error
 }
 type TCPTransport struct {
-	TCPTransportOpts
+	*TCPTransportOpts
 	listener net.Listener
 	rpcch    chan RPC
 }
 
-// Consume implements the Transport interface, which will return read-only channel
-//
-// for reading the incoming messages received from another peer in the network.
-func (t *TCPTransport) Consume() <-chan RPC {
-	return t.rpcch
-}
-
-func NewTCPTransport(opts TCPTransportOpts) *TCPTransport {
+func NewTCPTransport(opts *TCPTransportOpts) *TCPTransport {
 	return &TCPTransport{
 		TCPTransportOpts: opts,
 		rpcch:            make(chan RPC),
 	}
+}
+
+// Consume implements the Transport interface, which will return read-only channel.
+//
+// For reading the incoming messages received from another peer in the network.
+func (t *TCPTransport) Consume() <-chan RPC {
+	return t.rpcch
+}
+
+func (t *TCPTransport) Close() error {
+	return t.listener.Close()
+}
+
+// Dial implements the Transport interface.
+func (t *TCPTransport) Dial(addr string) error {
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		return err
+	}
+
+	// outbound connection.
+	go t.handleConn(conn, true)
+
+	return nil
 }
 
 func (t *TCPTransport) ListenAndAccept() error {
@@ -86,16 +80,12 @@ func (t *TCPTransport) startAcceptLoop() {
 			continue
 		}
 
-		fmt.Printf("new incoming connection %+v\n", conn)
-		go t.handleConn(conn)
+		// inbound connection because we are accepting connection.
+		go t.handleConn(conn, false)
 	}
 }
 
-func (t *TCPTransport) Close() error {
-	return t.listener.Close()
-}
-
-func (t *TCPTransport) handleConn(conn net.Conn) {
+func (t *TCPTransport) handleConn(conn net.Conn, outbound bool) {
 
 	var err error
 	defer func() {
@@ -104,10 +94,9 @@ func (t *TCPTransport) handleConn(conn net.Conn) {
 
 	}()
 
-	peer := NewTCPPeer(conn, true)
+	peer := NewTCPPeer(conn, outbound)
 
 	// First shake hands before reading.
-
 	if err := t.HandshakeFunc(peer); err != nil {
 		return
 	}
@@ -117,8 +106,8 @@ func (t *TCPTransport) handleConn(conn net.Conn) {
 			return
 		}
 	}
-	// Read loop.
 
+	// Read loop.
 	rpc := RPC{}
 	for {
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 
 	"github.com/ezratameno/forever-store/p2p"
 )
@@ -12,10 +13,14 @@ type FileServerOpts struct {
 	StorageRoot       string
 	PathTransformFunc PathTransformFunc
 	Transport         p2p.Transport
+	BootstrapNodes    []string
 }
 
 type FileServer struct {
 	FileServerOpts
+
+	peerLock sync.Mutex
+	peers    map[string]p2p.Peer
 
 	store  *Store
 	quitch chan struct{}
@@ -31,7 +36,19 @@ func NewFileServer(opts FileServerOpts) *FileServer {
 		FileServerOpts: opts,
 		store:          NewStore(storeOpts),
 		quitch:         make(chan struct{}),
+		peers:          make(map[string]p2p.Peer),
 	}
+}
+
+// OnPeer will add the peer to our network.
+func (s *FileServer) OnPeer(p p2p.Peer) error {
+
+	s.peerLock.Lock()
+	defer s.peerLock.Unlock()
+
+	s.peers[p.RemoteAddr().String()] = p
+	log.Printf("Connected with remote peer: %s", p.RemoteAddr().String())
+	return nil
 }
 
 func (s *FileServer) Stop() {
@@ -56,6 +73,28 @@ func (s *FileServer) loop() {
 	}
 }
 
+func (s *FileServer) BootstrapNetwork() error {
+
+	for _, addr := range s.BootstrapNodes {
+
+		fmt.Printf("Attempting to connect with remote: %s \n", addr)
+
+		go func(addr string) {
+
+			err := s.Transport.Dial(addr)
+			if err != nil {
+				log.Printf("dial error: %+v", err)
+				return
+			}
+
+			fmt.Printf("Connected with remote: %s \n", addr)
+
+		}(addr)
+	}
+
+	return nil
+}
+
 func (s *FileServer) Start() error {
 
 	err := s.Transport.ListenAndAccept()
@@ -63,6 +102,7 @@ func (s *FileServer) Start() error {
 		return err
 	}
 
+	s.BootstrapNetwork()
 	s.loop()
 	return nil
 
