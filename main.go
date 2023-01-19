@@ -1,41 +1,37 @@
 package main
 
 import (
-	"fmt"
 	"log"
-	"strings"
+	"time"
 
 	"github.com/ezratameno/forever-store/p2p"
 )
 
-func OnPeer(peer p2p.Peer) error {
-
-	fmt.Println("doing some logic with the peer outside of TPC Transport")
-	return nil
-}
 func main() {
 
-	opts := p2p.TCPTransportOpts{
+	tcpTransportOpts := p2p.TCPTransportOpts{
 		ListenAddr:    ":3000",
 		HandshakeFunc: p2p.NOPHandshakeFunc,
 		Decoder:       p2p.DefaultDecoder{},
-		OnPeer:        OnPeer,
+		// TODO: onPeer func.
 	}
 
-	tr := p2p.NewTCPTransport(opts)
+	tcpTransport := p2p.NewTCPTransport(tcpTransportOpts)
+	fileServerOptions := FileServerOpts{
+		StorageRoot:       "3000_network",
+		PathTransformFunc: CASPathTransformFunc,
+		Transport:         tcpTransport,
+	}
+	s := NewFileServer(fileServerOptions)
 
 	go func() {
-		for {
-			msg := <-tr.Consume()
-			fmt.Printf("message: %+v, from: %s\n", strings.TrimSpace(string(msg.Payload)), msg.From)
-
-		}
+		time.Sleep(time.Second * 3)
+		s.Stop()
 	}()
-	err := tr.ListenAndAccept()
+
+	err := s.Start()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// blocking
-	select {}
 }

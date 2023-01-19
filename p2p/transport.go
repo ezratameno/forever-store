@@ -13,4 +13,6 @@ type Transport interface {
 
 	// Consume will read rpc messages.
 	Consume() <-chan RPC
+
+	Close() error
 }

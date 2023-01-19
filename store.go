@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
 	"io"
 	"log"
 	"os"
@@ -104,9 +105,7 @@ func (s *Store) Has(key string) bool {
 	pathAndFileName := path.Join(s.Root, pathKey.FullPath())
 
 	_, err := os.Stat(pathAndFileName)
-
-	return err == nil
-
+	return !errors.Is(err, os.ErrNotExist)
 }
 
 func (s *Store) Clear() error {
@@ -124,6 +123,10 @@ func (s *Store) Delete(key string) error {
 
 	// delete the root directory recursively.
 	return os.RemoveAll(path.Join(s.Root, pathKey.FirstPathName()))
+}
+
+func (s *Store) Write(key string, r io.Reader) error {
+	return s.writeStream(key, r)
 }
 
 // Read reads the content of the file.
