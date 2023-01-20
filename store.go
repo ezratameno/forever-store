@@ -30,7 +30,7 @@ func CASPathTransformFunc(key string) PathKey {
 	blocksize := 5
 	sliceLen := len(hashStr) / blocksize
 
-	// copy into the path the hashed string.
+	// copy into the paths the hashed string in length of blocksize.
 	paths := make([]string, sliceLen)
 
 	for i := 0; i < sliceLen; i++ {
@@ -61,6 +61,8 @@ func (p *PathKey) FirstPathName() string {
 	}
 	return ""
 }
+
+// FullPath returns the full path to the file.
 func (p *PathKey) FullPath() string {
 	return path.Join(p.PathName, p.Filename)
 }
@@ -108,6 +110,7 @@ func (s *Store) Has(key string) bool {
 	return !errors.Is(err, os.ErrNotExist)
 }
 
+// Clear removes all the files from the root.
 func (s *Store) Clear() error {
 	return os.RemoveAll(s.Root)
 }
@@ -154,11 +157,12 @@ func (s *Store) readStream(key string) (io.ReadCloser, error) {
 	return os.Open(pathAndFileName)
 }
 
+// writeStream writes a file into the disk.
 func (s *Store) writeStream(key string, r io.Reader) error {
 
 	pathKey := s.PathTransformFunc(key)
 
-	// create folder.
+	// create folder under the root.
 	if err := os.MkdirAll(path.Join(s.Root, pathKey.PathName), os.ModePerm); err != nil {
 		return err
 	}
@@ -178,7 +182,7 @@ func (s *Store) writeStream(key string, r io.Reader) error {
 		return err
 	}
 
-	log.Printf("written (%d) bytes to disk", n)
+	log.Printf("written (%d) bytes to disk: %s", n, path.Join(s.Root, pathKey.PathName))
 	return nil
 
 }

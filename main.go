@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/ezratameno/forever-store/p2p"
 )
@@ -15,6 +17,7 @@ func makeServer(listenAddr string, nodes ...string) *FileServer {
 	}
 
 	tcpTransport := p2p.NewTCPTransport(&tcpTransportOpts)
+
 	fileServerOptions := FileServerOpts{
 		StorageRoot:       fmt.Sprintf("%s_network", listenAddr),
 		PathTransformFunc: CASPathTransformFunc,
@@ -38,6 +41,18 @@ func main() {
 		log.Fatal(s1.Start())
 	}()
 
-	log.Fatal(s2.Start())
+	time.Sleep(2 * time.Second)
+
+	go s2.Start()
+
+	time.Sleep(2 * time.Second)
+
+	data := bytes.NewReader([]byte("my big data file here!"))
+	err := s2.StoreData("myPrivateData", data)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	select {}
 
 }

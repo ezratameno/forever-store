@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"encoding/gob"
 	"fmt"
+	"io"
 	"log"
-	"strings"
 	"sync"
 
 	"github.com/ezratameno/forever-store/p2p"
@@ -40,6 +42,57 @@ func NewFileServer(opts FileServerOpts) *FileServer {
 	}
 }
 
+type Message struct {
+	From    string
+	Payload any
+}
+
+type DataMessage struct {
+	Key  string
+	Data []byte
+}
+
+// broadcast will send the Message to all the known peers in the network.
+func (s *FileServer) broadcast(msg *Message) error {
+
+	// peer implements the io.writer interface because the net.Conn implements it.
+	peers := []io.Writer{}
+	for _, peer := range s.peers {
+		peers = append(peers, peer)
+	}
+
+	mw := io.MultiWriter(peers...)
+
+	// transmit the data to all the peers.
+	return gob.NewEncoder(mw).Encode(msg)
+}
+
+func (s *FileServer) StoreData(key string, r io.Reader) error {
+
+	buf := new(bytes.Buffer)
+
+	// once we read from the r the data will no longer be available.
+	// tee helps us to make the data to be available also on the buffer.
+	tee := io.TeeReader(r, buf)
+
+	// 1. store this file to disk.
+	err := s.store.Write(key, tee)
+	if err != nil {
+		return err
+	}
+
+	// 2. broadcast this file to all known peers in the network.
+	p := &DataMessage{
+		Key:  key,
+		Data: buf.Bytes(),
+	}
+
+	return s.broadcast(&Message{
+		From:    "todo",
+		Payload: p,
+	})
+}
+
 // OnPeer will add the peer to our network.
 func (s *FileServer) OnPeer(p p2p.Peer) error {
 
@@ -66,13 +119,39 @@ func (s *FileServer) loop() {
 	for {
 		select {
 		case msg := <-s.Transport.Consume():
-			fmt.Printf("msg: %s, from: %+v:\n", strings.TrimSpace(string(msg.Payload)), msg.From)
+
+			// decode into a Message.
+			var m Message
+
+			err := gob.NewDecoder(bytes.NewReader(msg.Payload)).Decode(&m)
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+			fmt.Printf("%+v\n", m)
+
+			err = s.handleMessage(&m)
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+
 		case <-s.quitch:
 			return
 		}
 	}
 }
 
+func (s *FileServer) handleMessage(msg *Message) error {
+
+	switch v := msg.Payload.(type) {
+	case *DataMessage:
+		fmt.Println("recived data %+v\n", v)
+	}
+	return nil
+}
+
+// BootstrapNetwork will add default nodes to our network.
 func (s *FileServer) BootstrapNetwork() error {
 
 	for _, addr := range s.BootstrapNodes {
