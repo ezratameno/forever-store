@@ -118,9 +118,17 @@ func (t *TCPTransport) handleConn(conn net.Conn, outbound bool) {
 			return
 		}
 
-		rpc.From = conn.RemoteAddr()
+		rpc.From = conn.RemoteAddr().String()
+
+		// Guard the reading operation, we can't continue to read until we the stream.
+		peer.Wg.Add(1)
+
+		fmt.Println("waiting until stream is done.")
 
 		t.rpcch <- rpc
+
+		peer.Wg.Wait()
+		fmt.Println("stream is done continuing normal read loop.")
 
 	}
 }

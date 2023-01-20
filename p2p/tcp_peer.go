@@ -1,6 +1,9 @@
 package p2p
 
-import "net"
+import (
+	"net"
+	"sync"
+)
 
 // TCPPeer represents the remote node over a TCP established connection.
 type TCPPeer struct {
@@ -13,6 +16,9 @@ type TCPPeer struct {
 	//
 	// if we accept and retrieve a conn => outbound == false.
 	outbound bool
+
+	// sync the read of the peer.
+	Wg *sync.WaitGroup
 }
 
 func NewTCPPeer(conn net.Conn, outbound bool) *TCPPeer {
@@ -20,6 +26,7 @@ func NewTCPPeer(conn net.Conn, outbound bool) *TCPPeer {
 		// embed the conn interface.
 		Conn:     conn,
 		outbound: outbound,
+		Wg:       &sync.WaitGroup{},
 	}
 }
 
