@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/ezratameno/forever-store/p2p"
 )
@@ -48,6 +49,10 @@ type Message struct {
 
 type MessageStoreFile struct {
 	Key string
+
+	// We need to specifiy the size of the message.
+	// because we are streaming we won't get EOF, so we need to know how many bytes to read.
+	Size int64
 }
 
 // broadcast will send the Message to all the known peers in the network.
@@ -65,62 +70,63 @@ func (s *FileServer) broadcast(msg *Message) error {
 	return gob.NewEncoder(mw).Encode(msg)
 }
 
+// StoreData will store the data into disk and broadcast to all the known peers.
 func (s *FileServer) StoreData(key string, r io.Reader) error {
+	// 1. store this file to disk.
+	// 2. broadcast this file to all known peers in the network.
 
-	// buf := new(bytes.Buffer)
+	fileBuffer := new(bytes.Buffer)
 
-	// // once we read from the r the data will no longer be available.
-	// // tee helps us to make the data to be available also on the buffer.
-	// tee := io.TeeReader(r, buf)
+	// once we read from the r the data will no longer be available.
+	// tee helps us to make the data to be available also on the buffer.
+	tee := io.TeeReader(r, fileBuffer)
 
-	// // 1. store this file to disk.
-	// err := s.store.Write(key, tee)
-	// if err != nil {
-	// 	return err
-	// }
+	// ======================================
+	// Store this file to our own disk.
 
-	// // 2. broadcast this file to all known peers in the network.
-	// p := &DataMessage{
-	// 	Key:  key,
-	// 	Data: buf.Bytes(),
-	// }
-
-	// return s.broadcast(&Message{
-	// 	From:    "todo",
-	// 	Payload: p,
-	// })
-
-	buf := new(bytes.Buffer)
-	msg := Message{
-		Payload: MessageStoreFile{
-			Key: key,
-		},
-	}
-
-	err := gob.NewEncoder(buf).Encode(msg)
+	size, err := s.store.Write(key, tee)
 	if err != nil {
 		return err
 	}
 
-	// send the message telling what we want to do to all the peers.
+	// ========================================
+	// Broadcast the file to all the network to store.
+
+	msgBuf := new(bytes.Buffer)
+
+	msg := Message{
+		Payload: MessageStoreFile{
+			Key:  key,
+			Size: size,
+		},
+	}
+
+	err = gob.NewEncoder(msgBuf).Encode(msg)
+	if err != nil {
+		return err
+	}
+
+	// Send a message to all the peers telling what we want to do.
 	for _, peer := range s.peers {
-		err := peer.Send(buf.Bytes())
+		err := peer.Send(msgBuf.Bytes())
 		if err != nil {
 			return err
 		}
 	}
 
-	// time.Sleep(3 * time.Second)
+	// Stream the file we want to store.
 
-	// payload := []byte("THIS LARGE FILE")
+	// Give the server some time to process the msg.
+	time.Sleep(1 * time.Second)
 
-	// // stream the file.
-	// for _, peer := range s.peers {
-	// 	err := peer.Send(payload)
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// }
+	for _, peer := range s.peers {
+		n, err := io.Copy(peer, fileBuffer)
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("received and written (%d) bytes to disk \n", n)
+	}
 	return nil
 }
 
@@ -160,33 +166,11 @@ func (s *FileServer) loop() {
 				continue
 			}
 
-			fmt.Printf("%+v\n", msg.Payload)
-
-			// Get the peer that sent the message.
-			peer, ok := s.peers[rpc.From]
-			if !ok {
-				panic("peer not found in peer map")
-			}
-
-			fmt.Printf("%+v\n", peer)
-
-			// Read the next incoming (should be the stream that's incoming).
-			b := make([]byte, 1000)
-			_, err = peer.Read(b)
+			err = s.handleMessage(rpc.From, &msg)
 			if err != nil {
-				panic(err)
+				log.Println(err)
+				return
 			}
-
-			fmt.Println(string(b))
-
-			// enable to continue reading.
-			peer.(*p2p.TCPPeer).Wg.Done()
-
-			// err = s.handleMessage(&m)
-			// if err != nil {
-			// 	log.Println(err)
-			// 	continue
-			// }
 
 		case <-s.quitch:
 			return
@@ -194,14 +178,38 @@ func (s *FileServer) loop() {
 	}
 }
 
-// func (s *FileServer) handleMessage(msg *Message) error {
+func (s *FileServer) handleMessage(from string, msg *Message) error {
 
-// 	switch v := msg.Payload.(type) {
-// 	case *DataMessage:
-// 		fmt.Println("recived data %+v\n", v)
-// 	}
-// 	return nil
-// }
+	switch v := msg.Payload.(type) {
+	case MessageStoreFile:
+		return s.handleMessageStoreFile(from, v)
+	}
+	return nil
+}
+
+func (s *FileServer) handleMessageStoreFile(from string, msg MessageStoreFile) error {
+
+	peer, ok := s.peers[from]
+	if !ok {
+		return fmt.Errorf("peer (%s) could not be found in the peer map", from)
+	}
+
+	// Tell how many bytes we want to read from the peer.
+	r := io.LimitReader(peer, msg.Size)
+
+	// Store the file into the disk from the peer who sent the message.
+	n, err := s.store.Write(msg.Key, r)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("written (%d) bytes to disk: %s", n, from)
+
+	// Enable to continue reading from the peer.
+	peer.(*p2p.TCPPeer).Wg.Done()
+
+	return nil
+}
 
 // BootstrapNetwork will add default nodes to our network.
 func (s *FileServer) BootstrapNetwork() error {

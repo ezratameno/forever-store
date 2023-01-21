@@ -128,7 +128,8 @@ func (s *Store) Delete(key string) error {
 	return os.RemoveAll(path.Join(s.Root, pathKey.FirstPathName()))
 }
 
-func (s *Store) Write(key string, r io.Reader) error {
+// Write writes the file to disk and returns the number of bytes written.
+func (s *Store) Write(key string, r io.Reader) (int64, error) {
 	return s.writeStream(key, r)
 }
 
@@ -158,13 +159,13 @@ func (s *Store) readStream(key string) (io.ReadCloser, error) {
 }
 
 // writeStream writes a file into the disk.
-func (s *Store) writeStream(key string, r io.Reader) error {
+func (s *Store) writeStream(key string, r io.Reader) (int64, error) {
 
 	pathKey := s.PathTransformFunc(key)
 
 	// create folder under the root.
 	if err := os.MkdirAll(path.Join(s.Root, pathKey.PathName), os.ModePerm); err != nil {
-		return err
+		return 0, err
 	}
 
 	pathAndFileName := path.Join(s.Root, pathKey.FullPath())
@@ -172,17 +173,15 @@ func (s *Store) writeStream(key string, r io.Reader) error {
 	// create the file.
 	f, err := os.Create(pathAndFileName)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer f.Close()
 
 	// write to the file from the reader.
 	n, err := io.Copy(f, r)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
-	log.Printf("written (%d) bytes to disk: %s", n, path.Join(s.Root, pathKey.PathName))
-	return nil
-
+	return n, nil
 }
