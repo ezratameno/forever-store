@@ -55,8 +55,12 @@ type MessageStoreFile struct {
 	Size int64
 }
 
-// broadcast will send the Message to all the known peers in the network.
-func (s *FileServer) broadcast(msg *Message) error {
+type MessageGetFile struct {
+	Key string
+}
+
+// stream will send the Message to all the known peers in the network.
+func (s *FileServer) stream(msg *Message) error {
 
 	// peer implements the io.writer interface because the net.Conn implements it.
 	peers := []io.Writer{}
@@ -70,8 +74,71 @@ func (s *FileServer) broadcast(msg *Message) error {
 	return gob.NewEncoder(mw).Encode(msg)
 }
 
-// StoreData will store the data into disk and broadcast to all the known peers.
-func (s *FileServer) StoreData(key string, r io.Reader) error {
+// broadcast will send the message to all the known peers in the network.
+func (s *FileServer) broadcast(msg *Message) error {
+
+	buf := new(bytes.Buffer)
+
+	// Encode the msg.
+	err := gob.NewEncoder(buf).Encode(msg)
+	if err != nil {
+		return err
+	}
+
+	// Send a message to all the peers telling what we want to do.
+	for _, peer := range s.peers {
+		err := peer.Send(buf.Bytes())
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *FileServer) Get(key string) (io.Reader, error) {
+
+	// we have the key locally.
+	if s.store.Has(key) {
+		return s.store.Read(key)
+	}
+
+	fmt.Printf("don't have file (%s) locally, fetching from network\n", key)
+
+	// ======================================================
+	// Send a message to the known peers to get the key.
+	msg := Message{
+		Payload: MessageGetFile{
+			Key: key,
+		},
+	}
+
+	err := s.broadcast(&msg)
+	if err != nil {
+		return nil, err
+	}
+
+	// ==========================================
+	// Read from every peer to get us the file.
+
+	for _, peer := range s.peers {
+		fmt.Printf("receiving stream from peer:%s \n", peer.RemoteAddr().String())
+		fileBuffer := new(bytes.Buffer)
+		n, err := io.CopyN(fileBuffer, peer, 22)
+		if err != nil {
+			return nil, err
+		}
+
+		fmt.Printf("received (%d) bytes over the wire\n", n)
+	}
+
+	select {}
+
+	return nil, nil
+}
+
+// Store will store the data into disk and broadcast to all the known peers.
+func (s *FileServer) Store(key string, r io.Reader) error {
 	// 1. store this file to disk.
 	// 2. broadcast this file to all known peers in the network.
 
@@ -83,7 +150,6 @@ func (s *FileServer) StoreData(key string, r io.Reader) error {
 
 	// ======================================
 	// Store this file to our own disk.
-
 	size, err := s.store.Write(key, tee)
 	if err != nil {
 		return err
@@ -92,8 +158,6 @@ func (s *FileServer) StoreData(key string, r io.Reader) error {
 	// ========================================
 	// Broadcast the file to all the network to store.
 
-	msgBuf := new(bytes.Buffer)
-
 	msg := Message{
 		Payload: MessageStoreFile{
 			Key:  key,
@@ -101,17 +165,9 @@ func (s *FileServer) StoreData(key string, r io.Reader) error {
 		},
 	}
 
-	err = gob.NewEncoder(msgBuf).Encode(msg)
+	err = s.broadcast(&msg)
 	if err != nil {
 		return err
-	}
-
-	// Send a message to all the peers telling what we want to do.
-	for _, peer := range s.peers {
-		err := peer.Send(msgBuf.Bytes())
-		if err != nil {
-			return err
-		}
 	}
 
 	// Stream the file we want to store.
@@ -119,6 +175,7 @@ func (s *FileServer) StoreData(key string, r io.Reader) error {
 	// Give the server some time to process the msg.
 	time.Sleep(1 * time.Second)
 
+	// TODO: use a multiwriter here.
 	for _, peer := range s.peers {
 		n, err := io.Copy(peer, fileBuffer)
 		if err != nil {
@@ -149,7 +206,7 @@ func (s *FileServer) Stop() {
 func (s *FileServer) loop() {
 
 	defer func() {
-		log.Println("file server stopped due to user quit action.")
+		log.Println("file server stopped due error or user quit action.")
 		s.Transport.Close()
 	}()
 
@@ -157,19 +214,19 @@ func (s *FileServer) loop() {
 		select {
 		case rpc := <-s.Transport.Consume():
 
-			// decode into a Message.
 			var msg Message
 
+			// decode into a Message.
 			err := gob.NewDecoder(bytes.NewReader(rpc.Payload)).Decode(&msg)
 			if err != nil {
-				log.Println(err)
+				log.Printf("decoding error: %+v\n", err)
 				continue
 			}
 
 			err = s.handleMessage(rpc.From, &msg)
 			if err != nil {
-				log.Println(err)
-				return
+				log.Printf("handle message error: %+v\n", err)
+				continue
 			}
 
 		case <-s.quitch:
@@ -178,12 +235,48 @@ func (s *FileServer) loop() {
 	}
 }
 
+// handleMessage will handle the message according to the underlying type.
 func (s *FileServer) handleMessage(from string, msg *Message) error {
 
 	switch v := msg.Payload.(type) {
 	case MessageStoreFile:
 		return s.handleMessageStoreFile(from, v)
+
+	case MessageGetFile:
+		return s.handleMessageGetFile(from, v)
 	}
+	return nil
+}
+
+// handleMessageGetFile will send over the wire the desired file.
+func (s *FileServer) handleMessageGetFile(from string, msg MessageGetFile) error {
+
+	if !s.store.Has(msg.Key) {
+		return fmt.Errorf("need to serve file (%s), but it does not exist on disk", msg.Key)
+	}
+
+	fmt.Printf("serving file (%s) over the network \n", msg.Key)
+
+	// Fetch the file.
+	r, err := s.store.Read(msg.Key)
+	if err != nil {
+		return err
+	}
+
+	// Send the reader over the wire to the one who sent the message.
+	peer, ok := s.peers[from]
+	if !ok {
+		return fmt.Errorf("peer (%s) could not be found in the peer map", from)
+	}
+
+	// Stream the file over the wire.
+	n, err := io.Copy(peer, r)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("wrote (%d) bytes over the network to %s\n", n, from)
+
 	return nil
 }
 
@@ -203,7 +296,7 @@ func (s *FileServer) handleMessageStoreFile(from string, msg MessageStoreFile) e
 		return err
 	}
 
-	fmt.Printf("written (%d) bytes to disk: %s", n, from)
+	fmt.Printf("written (%d) bytes to disk: %s\n", n, from)
 
 	// Enable to continue reading from the peer.
 	peer.(*p2p.TCPPeer).Wg.Done()
@@ -251,4 +344,6 @@ func init() {
 
 	// we need to register all the types we want to send in the message.payload as any.
 	gob.Register(MessageStoreFile{})
+	gob.Register(MessageGetFile{})
+
 }
