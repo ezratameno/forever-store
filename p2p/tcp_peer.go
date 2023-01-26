@@ -18,7 +18,7 @@ type TCPPeer struct {
 	outbound bool
 
 	// sync the read of the peer.
-	Wg *sync.WaitGroup
+	wg *sync.WaitGroup
 }
 
 func NewTCPPeer(conn net.Conn, outbound bool) *TCPPeer {
@@ -26,11 +26,17 @@ func NewTCPPeer(conn net.Conn, outbound bool) *TCPPeer {
 		// embed the conn interface.
 		Conn:     conn,
 		outbound: outbound,
-		Wg:       &sync.WaitGroup{},
+		wg:       &sync.WaitGroup{},
 	}
 }
 
 func (p *TCPPeer) Send(b []byte) error {
 	_, err := p.Conn.Write(b)
 	return err
+}
+
+// CloseStream will close the stream
+func (p *TCPPeer) CloseStream() {
+	p.wg.Done()
+
 }

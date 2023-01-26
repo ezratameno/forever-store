@@ -50,7 +50,7 @@ type Message struct {
 type MessageStoreFile struct {
 	Key string
 
-	// We need to specifiy the size of the message.
+	// We need to specify the size of the message.
 	// because we are streaming we won't get EOF, so we need to know how many bytes to read.
 	Size int64
 }
@@ -87,7 +87,15 @@ func (s *FileServer) broadcast(msg *Message) error {
 
 	// Send a message to all the peers telling what we want to do.
 	for _, peer := range s.peers {
-		err := peer.Send(buf.Bytes())
+
+		// Send the first byte which will determine the type of incoming (Message/Stream)
+		err := peer.Send([]byte{p2p.IncomingMessage})
+		if err != nil {
+			return err
+		}
+
+		// Send the message.
+		err = peer.Send(buf.Bytes())
 		if err != nil {
 			return err
 		}
@@ -173,10 +181,17 @@ func (s *FileServer) Store(key string, r io.Reader) error {
 	// Stream the file we want to store.
 
 	// Give the server some time to process the msg.
-	time.Sleep(1 * time.Second)
+	time.Sleep(5 * time.Millisecond)
 
 	// TODO: use a multiwriter here.
 	for _, peer := range s.peers {
+
+		// send the type.
+		err := peer.Send([]byte{p2p.IncomingStream})
+		if err != nil {
+			return err
+		}
+
 		n, err := io.Copy(peer, fileBuffer)
 		if err != nil {
 			return err
@@ -296,10 +311,10 @@ func (s *FileServer) handleMessageStoreFile(from string, msg MessageStoreFile) e
 		return err
 	}
 
-	fmt.Printf("written (%d) bytes to disk: %s\n", n, from)
+	fmt.Printf("[%s] written (%d) bytes to disk\n", s.Transport.Addr(), n)
 
 	// Enable to continue reading from the peer.
-	peer.(*p2p.TCPPeer).Wg.Done()
+	peer.CloseStream()
 
 	return nil
 }
