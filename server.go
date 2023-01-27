@@ -143,7 +143,7 @@ func (s *FileServer) Get(key string) (io.Reader, error) {
 		binary.Read(peer, binary.LittleEndian, &fileSize)
 
 		// Store to disk the information we get from the peer.
-		n, err := s.store.Write(key, io.LimitReader(peer, fileSize))
+		n, err := s.store.WriteDecrypt(s.EncKey, key, io.LimitReader(peer, fileSize))
 		if err != nil {
 			return nil, err
 		}
@@ -197,21 +197,29 @@ func (s *FileServer) Store(key string, r io.Reader) error {
 	time.Sleep(5 * time.Millisecond)
 
 	// TODO: use a multiwriter here.
+
+	peers := []io.Writer{}
+
 	for _, peer := range s.peers {
-
-		// send the type.
-		err := peer.Send([]byte{p2p.IncomingStream})
-		if err != nil {
-			return err
-		}
-
-		n, err := copyEncrypt(s.EncKey, fileBuffer, peer)
-		if err != nil {
-			return err
-		}
-
-		fmt.Printf("received and written (%d) bytes to disk \n", n)
+		peers = append(peers, peer)
 	}
+
+	mw := io.MultiWriter(peers...)
+
+	// send the type of operation we want to do.
+	_, err = mw.Write([]byte{p2p.IncomingStream})
+	if err != nil {
+		return err
+	}
+
+	// stream the file.
+	n, err := copyEncrypt(s.EncKey, fileBuffer, mw)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("received and written (%d) bytes to disk \n", n)
+
 	return nil
 }
 

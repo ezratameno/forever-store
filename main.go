@@ -38,6 +38,7 @@ func main() {
 
 	s1 := makeServer(":3001")
 	s2 := makeServer(":4001", ":3001")
+	s3 := makeServer(":5001", ":4001", ":3001")
 
 	go func() {
 		log.Fatal(s1.Start())
@@ -47,28 +48,41 @@ func main() {
 
 	go s2.Start()
 
+	go func() {
+		log.Fatal(s3.Start())
+	}()
+
 	time.Sleep(2 * time.Second)
 
-	// for i := 0; i < 3; i++ {
-	data := bytes.NewReader([]byte("my big data file here!"))
-	err := s2.Store("myPrivateData", data)
-	if err != nil {
-		log.Fatal(err)
-	}
-	// time.Sleep(5 * time.Millisecond)
-	// }
+	for i := 0; i < 20; i++ {
+		key := fmt.Sprintf("%s_%d", "myPrivateData", i)
 
-	r, err := s2.Get("myPrivateData")
-	if err != nil {
-		log.Fatal(err)
-	}
+		data := bytes.NewReader([]byte("my big data file here!"))
+		err := s3.Store(key, data)
+		if err != nil {
+			log.Fatal(err)
+		}
 
-	b, err := io.ReadAll(r)
-	if err != nil {
-		log.Fatal(err)
-	}
+		time.Sleep(5 * time.Millisecond)
 
-	fmt.Printf("got: %s\n", string(b))
+		// Delete the key so we can fetch it remotely.
+		err = s3.store.Delete(key)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		r, err := s3.Get(key)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		b, err := io.ReadAll(r)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		fmt.Printf("got: %s\n", string(b))
+	}
 
 	select {}
 

@@ -132,6 +132,37 @@ func (s *Store) Write(key string, r io.Reader) (int64, error) {
 	return s.writeStream(key, r)
 }
 
+// writeStream writes a file into the disk.
+func (s *Store) writeStream(key string, r io.Reader) (int64, error) {
+
+	// create the file.
+	f, err := s.openFileForWriting(key)
+	if err != nil {
+		return 0, err
+	}
+
+	defer f.Close()
+
+	// write to the file from the reader.
+	return io.Copy(f, r)
+
+}
+
+func (s *Store) WriteDecrypt(encKey []byte, key string, r io.Reader) (int64, error) {
+
+	f, err := s.openFileForWriting(key)
+	if err != nil {
+		return 0, err
+	}
+
+	defer f.Close()
+
+	// write to the file from the reader.
+	n, err := copyDecrypt(encKey, r, f)
+
+	return int64(n), err
+}
+
 // Read reads the content of the file.
 func (s *Store) Read(key string) (int64, io.Reader, error) {
 	return s.readStream(key)
@@ -155,30 +186,16 @@ func (s *Store) readStream(key string) (int64, io.ReadCloser, error) {
 	return fi.Size(), file, nil
 }
 
-// writeStream writes a file into the disk.
-func (s *Store) writeStream(key string, r io.Reader) (int64, error) {
-
+func (s *Store) openFileForWriting(key string) (*os.File, error) {
 	pathKey := s.PathTransformFunc(key)
 
 	// create folder under the root.
 	if err := os.MkdirAll(path.Join(s.Root, pathKey.PathName), os.ModePerm); err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	pathAndFileName := path.Join(s.Root, pathKey.FullPath())
 
 	// create the file.
-	f, err := os.Create(pathAndFileName)
-	if err != nil {
-		return 0, err
-	}
-	defer f.Close()
-
-	// write to the file from the reader.
-	n, err := io.Copy(f, r)
-	if err != nil {
-		return 0, err
-	}
-
-	return n, nil
+	return os.Create(pathAndFileName)
 }
