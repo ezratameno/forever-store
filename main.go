@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"log"
@@ -23,6 +24,7 @@ func makeServer(listenAddr string, nodes ...string) *FileServer {
 		PathTransformFunc: CASPathTransformFunc,
 		Transport:         tcpTransport,
 		BootstrapNodes:    nodes,
+		EncKey:            newEncryptionKey(),
 	}
 
 	s := NewFileServer(fileServerOptions)
@@ -48,11 +50,11 @@ func main() {
 	time.Sleep(2 * time.Second)
 
 	// for i := 0; i < 3; i++ {
-	// data := bytes.NewReader([]byte("my big data file here!"))
-	// err := s2.Store("myPrivateData", data)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
+	data := bytes.NewReader([]byte("my big data file here!"))
+	err := s2.Store("myPrivateData", data)
+	if err != nil {
+		log.Fatal(err)
+	}
 	// time.Sleep(5 * time.Millisecond)
 	// }
 
