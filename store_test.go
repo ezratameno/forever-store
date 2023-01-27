@@ -36,7 +36,7 @@ func TestStore(t *testing.T) {
 		assert.Equal(t, true, s.Has(key))
 
 		// Read.
-		r, err := s.Read(key)
+		_, r, err := s.Read(key)
 		assert.Nil(t, err)
 		b, err := io.ReadAll(r)
 		assert.Nil(t, err)
