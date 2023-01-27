@@ -66,7 +66,7 @@ func main() {
 		time.Sleep(5 * time.Millisecond)
 
 		// Delete the key so we can fetch it remotely.
-		err = s3.store.Delete(key)
+		err = s3.store.Delete(s3.ID, key)
 		if err != nil {
 			log.Fatal(err)
 		}

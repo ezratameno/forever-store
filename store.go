@@ -69,7 +69,8 @@ func (p *PathKey) FullPath() string {
 type StoreOpts struct {
 
 	// Root is the folder name of the root, containing all the folders/files of the system.
-	Root              string
+	Root string
+
 	PathTransformFunc PathTransformFunc
 }
 
@@ -101,9 +102,9 @@ func NewStore(opts StoreOpts) *Store {
 }
 
 // Has checks if we have the file exists.
-func (s *Store) Has(key string) bool {
+func (s *Store) Has(id, key string) bool {
 	pathKey := s.PathTransformFunc(key)
-	pathAndFileName := path.Join(s.Root, pathKey.FullPath())
+	pathAndFileName := path.Join(s.Root, id, pathKey.FullPath())
 
 	_, err := os.Stat(pathAndFileName)
 	return !errors.Is(err, os.ErrNotExist)
@@ -115,7 +116,7 @@ func (s *Store) Clear() error {
 }
 
 // Delete deletes a file from the disk.
-func (s *Store) Delete(key string) error {
+func (s *Store) Delete(id, key string) error {
 	pathKey := s.PathTransformFunc(key)
 	pathAndFileName := pathKey.FullPath()
 
@@ -124,19 +125,19 @@ func (s *Store) Delete(key string) error {
 	}()
 
 	// delete the root directory recursively.
-	return os.RemoveAll(path.Join(s.Root, pathKey.FirstPathName()))
+	return os.RemoveAll(path.Join(s.Root, id, pathKey.FirstPathName()))
 }
 
 // Write writes the file to disk and returns the number of bytes written.
-func (s *Store) Write(key string, r io.Reader) (int64, error) {
-	return s.writeStream(key, r)
+func (s *Store) Write(id string, key string, r io.Reader) (int64, error) {
+	return s.writeStream(id, key, r)
 }
 
 // writeStream writes a file into the disk.
-func (s *Store) writeStream(key string, r io.Reader) (int64, error) {
+func (s *Store) writeStream(id string, key string, r io.Reader) (int64, error) {
 
 	// create the file.
-	f, err := s.openFileForWriting(key)
+	f, err := s.openFileForWriting(id, key)
 	if err != nil {
 		return 0, err
 	}
@@ -148,9 +149,9 @@ func (s *Store) writeStream(key string, r io.Reader) (int64, error) {
 
 }
 
-func (s *Store) WriteDecrypt(encKey []byte, key string, r io.Reader) (int64, error) {
+func (s *Store) WriteDecrypt(encKey []byte, id string, key string, r io.Reader) (int64, error) {
 
-	f, err := s.openFileForWriting(key)
+	f, err := s.openFileForWriting(id, key)
 	if err != nil {
 		return 0, err
 	}
@@ -164,13 +165,13 @@ func (s *Store) WriteDecrypt(encKey []byte, key string, r io.Reader) (int64, err
 }
 
 // Read reads the content of the file.
-func (s *Store) Read(key string) (int64, io.Reader, error) {
-	return s.readStream(key)
+func (s *Store) Read(id, key string) (int64, io.Reader, error) {
+	return s.readStream(id, key)
 }
 
-func (s *Store) readStream(key string) (int64, io.ReadCloser, error) {
+func (s *Store) readStream(id, key string) (int64, io.ReadCloser, error) {
 	pathKey := s.PathTransformFunc(key)
-	pathAndFileName := path.Join(s.Root, pathKey.FullPath())
+	pathAndFileName := path.Join(s.Root, id, pathKey.FullPath())
 
 	// get the file size.
 	fi, err := os.Stat(pathAndFileName)
@@ -186,15 +187,15 @@ func (s *Store) readStream(key string) (int64, io.ReadCloser, error) {
 	return fi.Size(), file, nil
 }
 
-func (s *Store) openFileForWriting(key string) (*os.File, error) {
+func (s *Store) openFileForWriting(id, key string) (*os.File, error) {
 	pathKey := s.PathTransformFunc(key)
-
+	pathNameWithRoot := path.Join(s.Root, id, pathKey.PathName)
 	// create folder under the root.
-	if err := os.MkdirAll(path.Join(s.Root, pathKey.PathName), os.ModePerm); err != nil {
+	if err := os.MkdirAll(pathNameWithRoot, os.ModePerm); err != nil {
 		return nil, err
 	}
 
-	pathAndFileName := path.Join(s.Root, pathKey.FullPath())
+	pathAndFileName := path.Join(s.Root, id, pathKey.FullPath())
 
 	// create the file.
 	return os.Create(pathAndFileName)

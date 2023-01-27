@@ -3,9 +3,23 @@ package main
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/md5"
 	"crypto/rand"
+	"encoding/hex"
 	"io"
 )
+
+// generateID will generate a random id.
+func generateID() string {
+	buf := make([]byte, 32)
+	io.ReadFull(rand.Reader, buf)
+	return hex.EncodeToString(buf)
+}
+
+func hashKey(key string) string {
+	hash := md5.Sum([]byte(key))
+	return hex.EncodeToString(hash[:])
+}
 
 func newEncryptionKey() []byte {
 	keyBuf := make([]byte, 32)
@@ -28,23 +42,30 @@ func copyDecrypt(key []byte, src io.Reader, dst io.Writer) (int, error) {
 		return 0, err
 	}
 
+	stream := cipher.NewCTR(block, iv)
+	return copyStream(stream, block.BlockSize(), src, dst)
+}
+
+func copyStream(stream cipher.Stream, blockSize int, src io.Reader, dst io.Writer) (int, error) {
+
 	// Maximum amount we will copy into memory.
 	// in streaming we don't need to copy to disk every byte.
 	buf := make([]byte, 32*1024)
 
-	stream := cipher.NewCTR(block, iv)
-	nw := block.BlockSize()
+	nw := blockSize
 
 	for {
+		// read everything from the src into the buffer.
 		n, err := src.Read(buf)
 		if n > 0 {
+			// write every read byte into the buffer as XOR.
 			stream.XORKeyStream(buf, buf[:n])
 			nn, err := dst.Write(buf[:n])
 			if err != nil {
 				return 0, err
 			}
 
-			// Add the number of bytes written.
+			// Add the number of bytes read.
 			nw += nn
 		}
 
@@ -82,35 +103,6 @@ func copyEncrypt(key []byte, src io.Reader, dst io.Writer) (int, error) {
 		return 0, err
 	}
 
-	// Maximum amount we will copy into memory.
-	// in streaming we don't need to copy to disk every byte.
-	buf := make([]byte, 32*1024)
-
 	stream := cipher.NewCTR(block, iv)
-	nw := block.BlockSize()
-	for {
-		// read everything from the src into the buffer.
-		n, err := src.Read(buf)
-		if n > 0 {
-			// write every read byte into the buffer as XOR.
-			stream.XORKeyStream(buf, buf[:n])
-			nn, err := dst.Write(buf[:n])
-			if err != nil {
-				return 0, err
-			}
-
-			// Add the number of bytes read.
-			nw += nn
-		}
-
-		// Done reading.
-		if err == io.EOF {
-			break
-		}
-
-		if err != nil {
-			return 0, err
-		}
-	}
-	return nw, nil
+	return copyStream(stream, block.BlockSize(), src, dst)
 }

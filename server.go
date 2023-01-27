@@ -19,6 +19,10 @@ type FileServerOpts struct {
 	PathTransformFunc PathTransformFunc
 	Transport         p2p.Transport
 	BootstrapNodes    []string
+
+	// ID of the owner of the storage, which will be used to store all files at that location.
+	// So we can sync all the files if needed.
+	ID string
 }
 
 type FileServer struct {
@@ -37,6 +41,10 @@ func NewFileServer(opts FileServerOpts) *FileServer {
 		Root:              opts.StorageRoot,
 		PathTransformFunc: opts.PathTransformFunc,
 	}
+
+	if opts.ID == "" {
+		opts.ID = generateID()
+	}
 	return &FileServer{
 		FileServerOpts: opts,
 		store:          NewStore(storeOpts),
@@ -50,8 +58,8 @@ type Message struct {
 }
 
 type MessageStoreFile struct {
+	ID  string
 	Key string
-
 	// We need to specify the size of the message.
 	// because we are streaming we won't get EOF, so we need to know how many bytes to read.
 	Size int64
@@ -59,21 +67,7 @@ type MessageStoreFile struct {
 
 type MessageGetFile struct {
 	Key string
-}
-
-// stream will send the Message to all the known peers in the network.
-func (s *FileServer) stream(msg *Message) error {
-
-	// peer implements the io.writer interface because the net.Conn implements it.
-	peers := []io.Writer{}
-	for _, peer := range s.peers {
-		peers = append(peers, peer)
-	}
-
-	mw := io.MultiWriter(peers...)
-
-	// transmit the data to all the peers.
-	return gob.NewEncoder(mw).Encode(msg)
+	ID  string
 }
 
 // broadcast will send the message to all the known peers in the network.
@@ -109,9 +103,9 @@ func (s *FileServer) broadcast(msg *Message) error {
 func (s *FileServer) Get(key string) (io.Reader, error) {
 
 	// we have the key locally.
-	if s.store.Has(key) {
+	if s.store.Has(s.ID, key) {
 		fmt.Printf("[%s] serving file (%s) locally from disk\n", s.Transport.Addr(), key)
-		_, r, err := s.store.Read(key)
+		_, r, err := s.store.Read(s.ID, key)
 		return r, err
 	}
 
@@ -121,7 +115,8 @@ func (s *FileServer) Get(key string) (io.Reader, error) {
 	// Send a message to the known peers to get the key.
 	msg := Message{
 		Payload: MessageGetFile{
-			Key: key,
+			Key: hashKey(key),
+			ID:  s.ID,
 		},
 	}
 
@@ -143,7 +138,7 @@ func (s *FileServer) Get(key string) (io.Reader, error) {
 		binary.Read(peer, binary.LittleEndian, &fileSize)
 
 		// Store to disk the information we get from the peer.
-		n, err := s.store.WriteDecrypt(s.EncKey, key, io.LimitReader(peer, fileSize))
+		n, err := s.store.WriteDecrypt(s.EncKey, s.ID, key, io.LimitReader(peer, fileSize))
 		if err != nil {
 			return nil, err
 		}
@@ -152,7 +147,7 @@ func (s *FileServer) Get(key string) (io.Reader, error) {
 		peer.CloseStream()
 	}
 
-	_, r, err := s.store.Read(key)
+	_, r, err := s.store.Read(s.ID, key)
 	return r, err
 }
 
@@ -169,7 +164,7 @@ func (s *FileServer) Store(key string, r io.Reader) error {
 
 	// ======================================
 	// Store this file to our own disk.
-	size, err := s.store.Write(key, tee)
+	size, err := s.store.Write(s.ID, key, tee)
 	if err != nil {
 		return err
 	}
@@ -179,7 +174,10 @@ func (s *FileServer) Store(key string, r io.Reader) error {
 
 	msg := Message{
 		Payload: MessageStoreFile{
-			Key: key,
+
+			// Where to store the file.
+			ID:  s.ID,
+			Key: hashKey(key),
 
 			// Because of the iv we add to the file.
 			Size: size + 16,
@@ -287,14 +285,14 @@ func (s *FileServer) handleMessage(from string, msg *Message) error {
 // handleMessageGetFile will send over the wire the desired file.
 func (s *FileServer) handleMessageGetFile(from string, msg MessageGetFile) error {
 
-	if !s.store.Has(msg.Key) {
+	if !s.store.Has(msg.ID, msg.Key) {
 		return fmt.Errorf("[%s] need to serve file (%s), but it does not exist on disk", s.Transport.Addr(), msg.Key)
 	}
 
 	fmt.Printf("serving file (%s) over the network \n", msg.Key)
 
 	// Fetch the file.
-	fileSize, r, err := s.store.Read(msg.Key)
+	fileSize, r, err := s.store.Read(msg.ID, msg.Key)
 	if err != nil {
 		return err
 	}
@@ -341,7 +339,7 @@ func (s *FileServer) handleMessageStoreFile(from string, msg MessageStoreFile) e
 	r := io.LimitReader(peer, msg.Size)
 
 	// Store the file into the disk from the peer who sent the message.
-	n, err := s.store.Write(msg.Key, r)
+	n, err := s.store.Write(msg.ID, msg.Key, r)
 	if err != nil {
 		return err
 	}

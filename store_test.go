@@ -22,30 +22,30 @@ func TestStore(t *testing.T) {
 	s := newStore()
 	defer teardown(t, s)
 	count := 50
-
+	id := generateID()
 	// test multiple times with different keys.
 	for i := 0; i < count; i++ {
 		key := fmt.Sprintf("foo_%d", i)
 
 		// Write.
 		data := []byte("some jpg bytes")
-		_, err := s.writeStream(key, bytes.NewReader(data))
+		_, err := s.writeStream(id, key, bytes.NewReader(data))
 		assert.Nil(t, err)
 
 		// Check that the file exists.
-		assert.Equal(t, true, s.Has(key))
+		assert.Equal(t, true, s.Has(id, key))
 
 		// Read.
-		_, r, err := s.Read(key)
+		_, r, err := s.Read(id, key)
 		assert.Nil(t, err)
 		b, err := io.ReadAll(r)
 		assert.Nil(t, err)
 		assert.Equal(t, data, b)
 
-		assert.Nil(t, s.Delete(key))
+		assert.Nil(t, s.Delete(id, key))
 
 		// Check that the file doesn't exists.
-		assert.Equal(t, false, s.Has(key))
+		assert.Equal(t, false, s.Has(id, key))
 	}
 
 }
